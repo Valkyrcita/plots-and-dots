@@ -1,0 +1,13 @@
+{
+  "appId": "com.valkyrcita.plotsanddots",
+  "appName": "Plots & Dots",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true
+  },
+  "plugins": {
+    "StatusBar": {
+      "overlaysWebView": false
+    }
+  }
+}

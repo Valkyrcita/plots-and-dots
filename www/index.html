@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#efe9f7">
+  <title>Plots &amp; Dots</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-dot">🪄</span>
+        <h1>Plots <span>&amp;</span> Dots</h1>
+      </div>
+      <nav class="segmented">
+        <button data-vista="listas" class="active">Listas</button>
+        <button data-vista="proyectos">Proyectos</button>
+        <button data-vista="habitos">Hábitos</button>
+      </nav>
+    </header>
+
+    <main class="view" id="view"></main>
+
+    <nav class="dock">
+      <button class="dock-btn" id="btn-ajustes" aria-label="Ajustes">⚙️</button>
+      <button class="fab" id="fab" aria-label="Crear">+</button>
+      <button class="dock-btn" id="btn-stats" aria-label="Estadísticas">📈</button>
+    </nav>
+  </div>
+
+  <div id="splash" style="position:fixed;inset:0;background:var(--bg);display:grid;place-items:center;z-index:999">
+    <div style="text-align:center">
+      <div style="font-size:48px">🪄</div>
+      <div style="font-weight:900;margin-top:8px;color:var(--ink)">Plots &amp; Dots</div>
+    </div>
+  </div>
+
+  <script src="js/store.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/listas.js"></script>
+  <script src="js/proyectos.js"></script>
+  <script src="js/gantt.js"></script>
+  <script src="js/habitos.js"></script>
+  <script src="js/datos.js"></script>
+  <script src="js/stats.js"></script>
+  <script src="js/ajustes.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
