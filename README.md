@@ -17,7 +17,8 @@ Web app (HTML/CSS/JS sin dependencias) empaquetada para Android con **Capacitor*
   título en negrita, rango de fechas en cita, bloques `emoji + nombre`, tareas completadas
   tachadas con `~✅ ~` y fechas específicas en cursiva al final.
 - Cada lista se pliega/despliega. Tocar el **nombre** entra a editar esa lista sola.
-- Tocar una tarea la completa/descompleta; mantener pulsado la edita.
+- Tocar una tarea la completa/descompleta.
+- **Reordenar arrastrando:** mantén pulsada una tarea (vibra) y arrástrala arriba/abajo dentro de su lista; mantén pulsado el encabezado de una lista para mover la lista entera (las demás se pliegan mientras arrastras y la pantalla se desplaza sola en los bordes). Si mantienes pulsada una tarea y la sueltas sin moverla, se abre su editor. El orden se guarda y se refleja en el resumen compartido.
 - `+ Agregar tarea a esta lista` al final de cada bloque.
 - Rango de fechas **manual** (botón 📅): filtra las tareas con fecha fuera del rango.
   Las tareas sin fecha siempre se ven.
@@ -36,8 +37,10 @@ Web app (HTML/CSS/JS sin dependencias) empaquetada para Android con **Capacitor*
 
 - Tabla con **cabecera de 2 niveles** (meses arriba / unidades abajo) y **primera columna fija**.
 - Unidades: **Hora · Día · Semana · Mes · Fecha exacta**. La cabecera se regenera sola.
-- **Pintar**: pulsa una casilla vacía y arrastra en horizontal (pointer events, funciona con dedo).
-- Tocar una casilla pintada abre un popup: rango, *Recortar aquí*, *Borrar pintado*, *Editar*.
+- **Pintar**: un toque en una casilla vacía la pinta; un toque en una pintada la borra (solo esa casilla;
+  puedes dejar huecos). No hay ventanitas ni arrastre: deslizar solo hace scroll, nunca pinta.
+- La tabla **crece hacia abajo** y hace scroll la pantalla completa (solo hay scroll interno en horizontal).
+- Tocar el **nombre** de una tarea abre su editor (la hoja ya no se cierra sola con el toque que la abre).
 - **Secciones**: fila oscura a todo lo ancho, plegable. Toque = plegar, mantener pulsado = editar.
 - **Tareas fijas** 📌: no se pintan, se crean con formulario (fecha + hora + duración),
   se dibujan en negro y avisan *"Es una tarea fija"* si intentas pintarlas.
@@ -116,11 +119,13 @@ TareaSimple    { id, listaId, titulo, completada, fechaEspecifica, prioridad, de
 Proyecto       { id, tipo:'proyecto', nombre, fechaInicio, fechaFin, unidadTiempo }
 Seccion        { id, proyectoId, titulo, orden, colapsada }
 TareaProyecto  { id, seccionId, titulo, tipo:'planificada'|'fija', color, orden, completada,
-                 planInicio, planFin, inicioIndice, finIndice,     // planificadas
+                 segmentos:[{a,b,ha,hb}],                          // planificadas: tramos pintados (fechas ISO + hora opcional)
+                 planInicio, planFin,                              // rango total (derivado de segmentos)
                  fechaFija, horaFija, duracionMinutos }            // fijas
 ```
 
-> La planificación se guarda como **fechas** (`planInicio` / `planFin`) y los índices de columna
+> La planificación se guarda como **fechas** (tramos en `segmentos`; `planInicio`/`planFin` es su rango total,
+> y las tareas antiguas que solo los tienen se leen como un único tramo) y los índices de columna
 > se recalculan a partir de ellas. Así el pintado no se pierde al cambiar de semana a día, etc.
 
 ---
@@ -186,6 +191,7 @@ www/
   js/store.js          persistencia y modelos
   js/utils.js          fechas y generación de columnas de tiempo
   js/ui.js             modales, pantallas, tema
+  js/reorden.js        arrastrar para reordenar (pulsación larga)
   js/listas.js         vista Listas
   js/proyectos.js      vista Proyectos
   js/gantt.js          organigrama

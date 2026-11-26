@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
   echo "<style>"; cat www/css/style.css; echo "</style>"
   sed -n '/<\/head>/,/<script src="js\/store.js">/p' www/index.html | sed '$d'
   echo "<script>"
-  for f in store utils ui listas proyectos gantt habitos datos stats ajustes; do cat "www/js/$f.js"; echo; done
+  for f in store utils ui reorden listas proyectos gantt habitos datos stats ajustes; do cat "www/js/$f.js"; echo; done
   cat www/js/app.js
   [ -n "$SEED" ] && cat "$SEED"
   echo "</script>"

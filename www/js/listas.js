@@ -90,8 +90,9 @@ const Listas = (() => {
     // un solo oyente para todas las tareas de todas las listas
     U.bindTapDelegado(body, '.tarea[data-tarea]', {
       tap: li => { toggleTarea(li.dataset.lista, li.dataset.tarea); actualizarTarea(body, li); },
-      hold: li => formTarea(li.dataset.lista, li.dataset.tarea)
+      hold: () => {}                                   // la pulsación larga la gestiona Reorden
     });
+    ligarReorden(body);
     body.addEventListener('click', e => {
       const t = e.target.closest('[data-toggle]');
       if (t) { e.stopPropagation(); plegar(body, t.dataset.toggle); return; }
@@ -136,7 +137,7 @@ const Listas = (() => {
           </ul>
         </div>`;
     });
-    html += `</div><p class="swipe-hint">Toca una tarea para completarla · toca el nombre de la lista para editarla</p>`;
+    html += `</div><p class="swipe-hint">Toca una tarea para completarla · mantén pulsado y arrastra para ordenar · mantén y suelta para editar</p>`;
     body.innerHTML = html;
     const r = body.querySelector('#lst-rango'); if (r) r.onclick = formRango;
   }
@@ -277,6 +278,47 @@ const Listas = (() => {
     });
   }
 
+
+  /* ---------- reordenar arrastrando (pulsación larga) ---------- */
+  function ligarReorden(cont) {
+    const hijos = (it, sel) => Array.from(it.parentElement.children).filter(x => x.matches(sel));
+    // tareas: solo dentro de su propia lista/bloque
+    Reorden.bind(cont, {
+      item: '.tarea[data-tarea]',
+      hermanos: it => hijos(it, '.tarea[data-tarea]'),
+      alEditar: it => formTarea(it.dataset.lista, it.dataset.tarea),
+      alSoltar: it => {
+        const l = S().listas.find(x => x.id === it.dataset.lista); if (!l) return;
+        const ids = Array.from(it.parentElement.querySelectorAll('.tarea[data-tarea]')).map(x => x.dataset.tarea);
+        const ocupa = new Set(ids), pos = [];
+        l.tareas.forEach((t, i) => { if (ocupa.has(t.id)) pos.push(i); });
+        if (pos.length !== ids.length) return;
+        const porId = new Map(l.tareas.map(t => [t.id, t]));
+        ids.forEach((id, k) => { l.tareas[pos[k]] = porId.get(id); });   // las ocultas por el filtro no se mueven
+        Store.save(); U.haptic('LIGHT');
+      }
+    });
+    // listas completas (solo en la vista resumen)
+    if (!cont.querySelector('.lista-block')) return;
+    Reorden.bind(cont, {
+      item: '.lista-block',
+      agarre: '.lista-head',
+      hermanos: it => hijos(it, '.lista-block'),
+      alEmpezar: () => cont.querySelectorAll('.lista-block:not(.collapsed)').forEach(b => { b.classList.add('collapsed', 'reord-tmp'); }),
+      alTerminar: () => cont.querySelectorAll('.lista-block.reord-tmp').forEach(b => {
+        b.classList.remove('reord-tmp'); if (!colapsadas.has(b.dataset.lista)) b.classList.remove('collapsed'); }),
+      alSoltar: () => {
+        const ids = Array.from(cont.querySelectorAll('.lista-block[data-lista]')).map(x => x.dataset.lista);
+        const arr = S().listas, porId = new Map(arr.map(l => [l.id, l]));
+        const nuevo = ids.map(id => porId.get(id)).filter(Boolean);
+        if (nuevo.length !== arr.length) return;
+        arr.splice(0, arr.length, ...nuevo);
+        arr.forEach((l, i) => { l.orden = i; });
+        Store.save(); U.haptic('LIGHT');
+      }
+    });
+  }
+
   /* ---------- pantalla de una lista ---------- */
   let screenRef = null;
   function refrescarScreen(listaId) {
@@ -308,7 +350,7 @@ const Listas = (() => {
     });
     sc.querySelectorAll('.tarea[data-tarea]').forEach(li => U.bindTap(li, {
       tap: () => { toggleTarea(id, li.dataset.tarea); App.render(); refrescarScreen(id); },
-      hold: () => formTarea(id, li.dataset.tarea)
+      hold: () => {}
     }));
   }
 
@@ -327,7 +369,7 @@ const Listas = (() => {
             U.compartir(txt, l.nombre);
           } }
       ],
-      onMount: sc => bindCuerpo(sc, id),
+      onMount: sc => { bindCuerpo(sc, id); ligarReorden(sc); },
       onClose: () => { screenRef = null; App.render(); }
     });
     screenRef = { el: s.el, listaId: id };

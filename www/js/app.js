@@ -2,7 +2,7 @@
    Plots & Dots - arranque y navegación
    ========================================================= */
 const App = (() => {
-  const VERSION='0.4.1';
+  const VERSION='0.6.0';
   let vista = 'listas';     // listas | proyectos | habitos
 
   function render() {

@@ -48,7 +48,15 @@ const UI = (() => {
         <div class="sheet-actions"></div>
       </div>`;
     const cerrar = () => { ov.style.animation = 'fade .15s ease reverse'; setTimeout(() => ov.remove(), 130); };
-    ov.addEventListener('click', e => { if (e.target === ov) cerrar(); });
+    // Solo se cierra si el toque EMPEZÓ y terminó en el fondo, y no justo al abrir:
+    // si no, el mismo toque que abre la hoja (su "click" llega después) la cerraba al instante.
+    const abierta = Date.now(); let bajoFondo = false;
+    ov.addEventListener('pointerdown', e => { bajoFondo = e.target === ov; });
+    ov.addEventListener('click', e => {
+      const ok = e.target === ov && bajoFondo && Date.now() - abierta > 400;
+      bajoFondo = false;
+      if (ok) cerrar();
+    });
 
     const acciones = ov.querySelector('.sheet-actions');
     (opts.acciones || []).forEach(a => {

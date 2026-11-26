@@ -34,11 +34,36 @@ const Gantt = (() => {
     return r;
   }
 
+  /* tramos pintados de una tarea planificada: lista de {a, b, ha, hb} (fechas ISO y horas opcionales).
+     Las tareas guardadas antes de las "casillas sueltas" solo tienen planInicio/planFin: se leen como un tramo. */
+  function segsDe(t) {
+    if (Array.isArray(t.segmentos) && t.segmentos.length) return t.segmentos;
+    if (t.planInicio && t.planFin) return [{ a: t.planInicio, b: t.planFin, ha: t.planHoraInicio || null, hb: t.planHoraFin || null }];
+    return [];
+  }
+  function fechasSeg(sg) {
+    const a = U.fromISO(sg.a); a.setHours(0, 0, 0, 0);
+    const b = U.fromISO(sg.b); b.setHours(23, 59, 59, 999);
+    if (sg.ha) { const [h, m] = sg.ha.split(':').map(Number); a.setHours(h, m, 0, 0); }
+    if (sg.hb) { const [h, m] = sg.hb.split(':').map(Number); b.setHours(h, m, 59, 999); }
+    return { a, b };
+  }
+  /* columnas que cubre un tramo (null si queda fuera del periodo) */
+  function rangoSeg(sg, cols) {
+    const { a, b } = fechasSeg(sg);
+    const ini = buscarCol(cols, a);
+    if (ini < 0 || cols[ini].inicio > b) return null;
+    let fin = ini;
+    while (fin + 1 < cols.length && cols[fin + 1].inicio <= b) fin++;
+    return { ini, fin };
+  }
+
+  /* devuelve SIEMPRE una lista de rangos {ini, fin}: vacía si no hay nada que dibujar */
   function indicesDe(t, cols) {
-    if (!cols || !cols.length) return null;
+    if (!cols || !cols.length) return [];
     if (t.tipo === 'fija') {
       const i = U.indiceDeFecha(cols, t.fechaFija, t.horaFija);
-      if (i < 0) return null;
+      if (i < 0) return [];
       let fin = i;
       if (t.duracionMinutos) {
         const base = U.fromISO(t.fechaFija);
@@ -46,18 +71,9 @@ const Gantt = (() => {
         const end = new Date(base.getTime() + t.duracionMinutos * 60000);
         while (fin + 1 < cols.length && end > cols[fin + 1].inicio) fin++;
       }
-      return { ini: i, fin: Math.max(i, fin) };
+      return [{ ini: i, fin: Math.max(i, fin) }];
     }
-    if (!t.planInicio || !t.planFin) return null;
-    const a = U.fromISO(t.planInicio); a.setHours(0, 0, 0, 0);
-    const b = U.fromISO(t.planFin); b.setHours(23, 59, 59, 999);
-    if (t.planHoraInicio) { const [h, m] = t.planHoraInicio.split(':').map(Number); a.setHours(h, m, 0, 0); }
-    if (t.planHoraFin) { const [h, m] = t.planHoraFin.split(':').map(Number); b.setHours(h, m, 59, 999); }
-    const ini = buscarCol(cols, a);
-    if (ini < 0 || cols[ini].inicio > b) return null;
-    let fin = ini;
-    while (fin + 1 < cols.length && cols[fin + 1].inicio <= b) fin++;
-    return { ini, fin };
+    return segsDe(t).map(sg => rangoSeg(sg, cols)).filter(Boolean).sort((x, y) => x.ini - y.ini);
   }
 
   /* caché por tarea: no se recalcula en cada dibujado */
@@ -69,43 +85,68 @@ const Gantt = (() => {
   }
   function olvidar(id) { if (ref && ref.idx) { if (id) ref.idx.delete(id); else ref.idx = new Map(); } }
 
-  function guardarPintado(t, cols, i0, i1) {
-    const a = Math.min(i0, i1), b = Math.max(i0, i1);
-    const p = S().proyectos.find(x => x.id === proyectoDeTarea(t));
-    t.planInicio = U.toISO(cols[a].inicio);
-    t.planFin = U.toISO(cols[b].fin);
-    if (p && p.unidadTiempo === 'hora') {
-      t.planHoraInicio = U.pad(cols[a].inicio.getHours()) + ':00';
-      t.planHoraFin = U.pad(cols[b].fin.getHours()) + ':59';
-    } else { t.planHoraInicio = null; t.planHoraFin = null; }
-    t.inicioIndice = a; t.finIndice = b;
+  /* guarda los tramos y deja planInicio/planFin como el rango total (para el resumen y para versiones antiguas) */
+  function guardarSegs(t, segs) {
+    segs = segs.slice().sort((x, y) => fechasSeg(x).a - fechasSeg(y).a);
+    t.segmentos = segs;
+    if (!segs.length) {
+      t.planInicio = t.planFin = t.planHoraInicio = t.planHoraFin = null;
+    } else {
+      const primero = segs[0];
+      const ultimo = segs.reduce((m, x) => (fechasSeg(x).b > fechasSeg(m).b ? x : m), segs[0]);
+      t.planInicio = primero.a; t.planHoraInicio = primero.ha || null;
+      t.planFin = ultimo.b;     t.planHoraFin = ultimo.hb || null;
+    }
+    t.inicioIndice = null; t.finIndice = null;
     olvidar(t.id); Store.save();
   }
 
-  function limpiarPintado(t) {
-    t.planInicio = null; t.planFin = null; t.planHoraInicio = null; t.planHoraFin = null;
-    t.inicioIndice = null; t.finIndice = null;
-    olvidar(t.id); Store.save();
+  /* un toque en una casilla: vacía → se pinta; pintada → se borra (solo esa casilla) */
+  function alternarCelda(t, i, cols, p) {
+    const hora = p.unidadTiempo === 'hora';
+    const celda = c => ({
+      a: U.toISO(cols[c].inicio), b: U.toISO(cols[c].fin),
+      ha: hora ? U.pad(cols[c].inicio.getHours()) + ':00' : null,
+      hb: hora ? U.pad(cols[c].fin.getHours()) + ':59' : null
+    });
+    const segs = segsDe(t).map(x => Object.assign({}, x));
+    const rs = segs.map(sg => ({ sg, r: rangoSeg(sg, cols) }));
+    const dentro = rs.find(x => x.r && i >= x.r.ini && i <= x.r.fin);
+    let nuevos;
+    if (dentro) {                                   // borrar: el tramo se parte en dos (o se acorta)
+      const { sg, r } = dentro;
+      nuevos = segs.filter(x => x !== sg);
+      if (i > r.ini) { const c = celda(i - 1); nuevos.push({ a: sg.a, ha: sg.ha || null, b: c.b, hb: c.hb }); }
+      if (i < r.fin) { const c = celda(i + 1); nuevos.push({ a: c.a, ha: c.ha, b: sg.b, hb: sg.hb || null }); }
+    } else {                                        // pintar: se une con los tramos vecinos si se tocan
+      const izq = rs.find(x => x.r && x.r.fin === i - 1), der = rs.find(x => x.r && x.r.ini === i + 1);
+      const c = celda(i);
+      const nuevo = { a: izq ? izq.sg.a : c.a, ha: izq ? (izq.sg.ha || null) : c.ha,
+                      b: der ? der.sg.b : c.b, hb: der ? (der.sg.hb || null) : c.hb };
+      nuevos = segs.filter(x => x !== (izq && izq.sg) && x !== (der && der.sg));
+      nuevos.push(nuevo);
+    }
+    guardarSegs(t, nuevos);
+    return !dentro;
   }
 
   /* ---------- dibujado ---------- */
   function anchoNombre() { return S().ajustes.anchoTareas === 'amplio' ? 230 : 148; }
 
   function barraHTML(t) {
-    const idx = idxDe(t);
-    if (!idx) return '';
-    const left = idx.ini * CELL_W;
-    const w = (idx.fin - idx.ini + 1) * CELL_W;
+    const rs = idxDe(t);
+    if (!rs || !rs.length) return '';
     if (t.tipo === 'fija') {
-      return `<i class="barra fija" data-t="${t.id}" style="left:${left}px;width:${w}px"
+      const idx = rs[0];
+      return `<i class="barra fija" data-t="${t.id}" style="left:${idx.ini * CELL_W}px;width:${(idx.fin - idx.ini + 1) * CELL_W}px"
               title="Fija: ${U.esc(U.fechaCorta(t.fechaFija))} ${U.esc(U.hora12(t.horaFija))}">📌</i>`;
     }
     const c = U.esc(t.color || S().ajustes.colorDefecto);
-    return `<i class="barra" data-t="${t.id}" style="left:${left}px;width:${w}px;background:${c}"></i>`;
+    return rs.map(idx => `<i class="barra" data-t="${t.id}" style="left:${idx.ini * CELL_W}px;width:${(idx.fin - idx.ini + 1) * CELL_W}px;background:${c}"></i>`).join('');
   }
 
   function filaHTML(t, ancho) {
-    const fuera = t.tipo === 'fija' && !idxDe(t);
+    const fuera = t.tipo === 'fija' && !(idxDe(t) || []).length;
     return `<tr data-row="${t.id}">
       <td class="g-name${t.completada ? ' done' : ''}" data-name="${t.id}">
         <span class="drag">⣿</span><span class="t">${U.esc(t.titulo)}</span>${t.tipo === 'fija' ? '<span class="pin">📌</span>' : ''}${fuera ? '<span class="pin" title="Su fecha está fuera del periodo">⚠️</span>' : ''}
@@ -185,7 +226,7 @@ const Gantt = (() => {
         <button class="btn sm" data-add-fija="1">📌 Tarea fija</button>
         <button class="btn sm" data-add-sec="1">+ Sección</button>
       </div>
-      <p class="swipe-hint" style="padding:0 16px 24px">Arrastra sobre la fila para pintar · mantén pulsado el nombre para mover la tarea</p>`;
+      <p class="swipe-hint" style="padding:0 16px 24px">Toca una casilla para pintarla o borrarla · toca el nombre para editar · mantenlo pulsado para mover la tarea</p>`;
   }
 
   function pintarTabla(p) {
@@ -203,14 +244,16 @@ const Gantt = (() => {
     if (!ref || ref.proyectoId !== pid || !document.body.contains(ref.el)) return;
     const p = S().proyectos.find(x => x.id === pid); if (!p) return;
     const viejo = ref.el.querySelector('.gantt-scroll');
-    const x = viejo ? viejo.scrollLeft : 0, y = viejo ? viejo.scrollTop : 0;
+    const x = viejo ? viejo.scrollLeft : 0;
+    const sb = ref.el.querySelector('.screen-body'), y = sb ? sb.scrollTop : 0;
     ref.cols = columnas(p); olvidar();
-    ref.el.querySelector('.screen-body').innerHTML = cuerpo(p);
+    sb.innerHTML = cuerpo(p);
     ref.el.querySelector('h2').textContent = p.nombre;
     bind(ref.el, p);
     pintarTabla(p);
     const nuevo = ref.el.querySelector('.gantt-scroll');
-    if (nuevo) { nuevo.scrollLeft = x; nuevo.scrollTop = y; }
+    if (nuevo) nuevo.scrollLeft = x;
+    sb.scrollTop = y;
   }
 
   /* solo la barra de una tarea: lo más barato posible */
@@ -253,7 +296,7 @@ const Gantt = (() => {
       hold: () => formSeccion(p.id, tr.dataset.sec),
       msHold: 500
     }));
-    bindPintado(scroller, p, cols);
+    bindToque(scroller, p, cols);
   }
 
   function bindNombre(td, p, scroller) {
@@ -279,7 +322,7 @@ const Gantt = (() => {
       if (!activo) return;
       if (!dragging) { if (Math.abs(e.clientY - startY) > 8) { clearTimeout(hold); hold = null; } return; }
       e.preventDefault();
-      const cont = scroller;
+      const cont = scroller.closest('.screen-body') || scroller;
       const r = cont.getBoundingClientRect();
       if (e.clientY < r.top + 46) cont.scrollTop -= 12;
       else if (e.clientY > r.bottom - 46) cont.scrollTop += 12;
@@ -319,81 +362,21 @@ const Gantt = (() => {
     Store.save(); pintarTabla(p); U.haptic('LIGHT');
   }
 
-  /* pintar arrastrando sobre la pista: solo se mueve UNA barra de previsualización */
-  function bindPintado(scroller, p, cols) {
+  /* un toque pinta o borra UNA casilla. Se usa "click" (no pointerdown): el navegador no lo
+     genera si el dedo se movió (scroll lateral) ni al parar un scroll con inercia, así que
+     deslizar nunca pinta nada por error. */
+  function bindToque(scroller, p, cols) {
     const tabla = scroller.querySelector('.gantt-table');
     if (!tabla) return;
-    let g = null;   // { t, pista, i0, i1, prev, x0, y0 }
-
-    const colDe = (pista, clientX) => {
-      const r = pista.getBoundingClientRect();
-      return Math.max(0, Math.min(cols.length - 1, Math.floor((clientX - r.left) / CELL_W)));
-    };
-    const dibujarPrev = () => {
-      const a = Math.min(g.i0, g.i1), b = Math.max(g.i0, g.i1);
-      g.prev.style.left = (a * CELL_W) + 'px';
-      g.prev.style.width = ((b - a + 1) * CELL_W) + 'px';
-    };
-    const cancelar = () => { if (g && g.prev) g.prev.remove(); g = null; };
-
-    tabla.addEventListener('dragstart', e => e.preventDefault());
-
-    tabla.addEventListener('pointerdown', e => {
+    tabla.addEventListener('click', e => {
       const pista = e.target.closest('.g-track'); if (!pista) return;
       const t = S().tareasProyecto.find(x => x.id === pista.dataset.t); if (!t) return;
-      if (e.cancelable) e.preventDefault();
       if (t.tipo === 'fija') { U.toast('Es una tarea fija: cambia su fecha en el formulario'); return; }
-      const barra = e.target.closest('.barra');
-      if (barra) { popupBarra(t, colDe(pista, e.clientX), p, cols); return; }
-      const i = colDe(pista, e.clientX);
-      const prev = document.createElement('i');
-      prev.className = 'barra previa';
-      prev.style.background = t.color || S().ajustes.colorDefecto;
-      pista.appendChild(prev);
-      g = { t, pista, i0: i, i1: i, prev, x0: e.clientX, y0: e.clientY };
-      dibujarPrev();
-      try { pista.setPointerCapture(e.pointerId); } catch (err) {}
-      U.haptic('LIGHT');
-    });
-
-    tabla.addEventListener('pointermove', e => {
-      if (!g) return;
-      const dx = Math.abs(e.clientX - g.x0), dy = Math.abs(e.clientY - g.y0);
-      if (dy > 14 && dy > dx) { cancelar(); return; }   // es un scroll vertical, no pintura
-      e.preventDefault();
-      const i = colDe(g.pista, e.clientX);
-      if (i !== g.i1) { g.i1 = i; dibujarPrev(); }
-    }, { passive: false });
-
-    const fin = () => {
-      if (!g) return;
-      const t = g.t, i0 = g.i0, i1 = g.i1;
-      cancelar();
-      guardarPintado(t, cols, i0, i1);
+      const r = pista.getBoundingClientRect();
+      const i = Math.max(0, Math.min(cols.length - 1, Math.floor((e.clientX - r.left) / CELL_W)));
+      alternarCelda(t, i, cols, p);
       repintarFila(p, t.id);
-    };
-    tabla.addEventListener('pointerup', fin);
-    tabla.addEventListener('pointercancel', cancelar);
-  }
-
-  function popupBarra(t, i, p, cols) {
-    const idx = idxDe(t);
-    const rango = idx ? `${U.esc(cols[idx.ini].grupo)} ${cols[idx.ini].label} → ${U.esc(cols[idx.fin].grupo)} ${cols[idx.fin].label}` : '—';
-    UI.modal({
-      titulo: t.titulo, centrado: true,
-      html: `<p style="margin:0 0 6px;color:var(--ink-soft);font-size:13.5px">📍 ${rango}</p>
-             <p style="margin:0;color:var(--ink-faint);font-size:12.5px">${U.fechaMini(t.planInicio)} — ${U.fechaMini(t.planFin)}</p>`,
-      acciones: [
-        { txt: 'Recortar aquí', clase: 'btn', fn: () => {
-            if (!idx) return;
-            if (i === idx.ini && i === idx.fin) limpiarPintado(t);
-            else if (i === idx.ini) guardarPintado(t, cols, i + 1, idx.fin);
-            else guardarPintado(t, cols, idx.ini, i - 1);
-            repintarFila(p, t.id);
-          } },
-        { txt: 'Borrar pintado', clase: 'btn danger', fn: () => { limpiarPintado(t); repintarFila(p, t.id); } },
-        { txt: 'Editar', clase: 'btn primary', fn: () => formTarea(p.id, t.id) }
-      ]
+      U.haptic('LIGHT');
     });
   }
 
@@ -443,7 +426,7 @@ const Gantt = (() => {
 
     const campoPlan = `
       <div class="field"><label>Color</label>${UI.colorPicker(color)}</div>
-      <p style="font-size:12.5px;color:var(--ink-faint);margin:0 0 4px">Después pinta su fila en el organigrama arrastrando.</p>`;
+      <p style="font-size:12.5px;color:var(--ink-faint);margin:0 0 4px">Después pinta su fila en el organigrama tocando las casillas.</p>`;
 
     UI.modal({
       titulo: t ? 'Editar tarea' : (tipo === 'fija' ? '📌 Nueva tarea fija' : 'Nueva tarea planificada'),
@@ -531,7 +514,7 @@ const Gantt = (() => {
       ts.forEach(t => {
         let extra = '';
         if (t.tipo === 'fija') extra = ` - *📌 ${U.fechaCorta(t.fechaFija)} ${U.hora12(t.horaFija)}*`;
-        else if (indicesDe(t, cols)) extra = ` - _${U.fechaMini(t.planInicio)} a ${U.fechaMini(t.planFin)}_`;
+        else if (indicesDe(t, cols).length) extra = ` - _${U.fechaMini(t.planInicio)} a ${U.fechaMini(t.planFin)}_`;
         out += t.completada ? `- ~✅${t.titulo}~\n` : `- ${t.titulo}${extra}\n`;
       });
     });
